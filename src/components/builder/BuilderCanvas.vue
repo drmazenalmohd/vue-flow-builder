@@ -27,6 +27,7 @@ import EditModal from './EditModal.vue';
 import TopBar from './TopBar.vue';
 import type { FlowData } from '../../types/nodes';
 import { FlowCompiler, CompilationError } from '../../services/FlowCompiler';
+import { flowApi, ApiError } from '../../api/flowApi';
 
 const nodeTypes = {
   start: StartNode,
@@ -487,6 +488,7 @@ const handlePublish = async () => {
 
     // Compile flow
     const executableFlow = compiler.compile(flowData, {
+      name: flowName.value,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       publishedAt: new Date().toISOString(),
@@ -497,15 +499,49 @@ const handlePublish = async () => {
 
     console.log('📦 Compiled flow for publishing:', executableFlow);
 
-    // TODO: Send to backend API when available
-    // const response = await fetch('/api/v1/flows', {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: compiler.exportJSON(executableFlow),
-    // });
-    // const result = await response.json();
+    // Try to send to backend API
+    try {
+      const response = await flowApi.createFlow({
+        flow: executableFlow,
+        ui: flowData,
+      });
 
-    alert(`✅ Flow compiled successfully!\n\nFlow ID: ${executableFlow.id}\nNodes: ${Object.keys(executableFlow.nodes).length}\n\n(Backend API integration pending)`);
+      alert(
+        `✅ Flow Published Successfully!\n\n` +
+        `Flow ID: ${response.id}\n` +
+        `Version: ${response.version}\n` +
+        `Status: ${response.status}\n` +
+        `Nodes: ${Object.keys(executableFlow.nodes).length}\n\n` +
+        `Your flow is now live!`
+      );
+
+      lastSaved.value = 'just now';
+      hasUnsavedChanges.value = false;
+    } catch (apiError) {
+      if (apiError instanceof ApiError) {
+        // Backend is not available or returned error
+        if (apiError.status === 0) {
+          // Network error - backend not running
+          console.warn('Backend not available, showing preview instead');
+          alert(
+            `⚠️ Backend API Not Available\n\n` +
+            `Flow compiled successfully but could not be published.\n\n` +
+            `Flow ID: ${executableFlow.id}\n` +
+            `Nodes: ${Object.keys(executableFlow.nodes).length}\n\n` +
+            `To publish, start the backend server and try again.`
+          );
+        } else {
+          // Backend returned an error
+          alert(
+            `❌ Backend Error (${apiError.status})\n\n` +
+            `${apiError.message}\n\n` +
+            `Please check backend logs for details.`
+          );
+        }
+      } else {
+        throw apiError;
+      }
+    }
   } catch (error) {
     if (error instanceof CompilationError) {
       const errorMessages = error.errors?.map(e => `• ${e.message}`).join('\n') || error.message;
