@@ -26,6 +26,7 @@ import AnalyticsPanel from './AnalyticsPanel.vue';
 import EditModal from './EditModal.vue';
 import TopBar from './TopBar.vue';
 import type { FlowData } from '../../types/nodes';
+import { FlowCompiler, CompilationError } from '../../services/FlowCompiler';
 
 const nodeTypes = {
   start: StartNode,
@@ -63,6 +64,9 @@ const lastSaved = ref('just now');
 const hasUnsavedChanges = ref(false);
 
 const { addNodes, removeNodes, updateNode, fitView, zoomIn, zoomOut, getNodes, getEdges, setNodes, setEdges, getViewport, setViewport, addEdges } = useVueFlow();
+
+// Flow Compiler instance
+const compiler = new FlowCompiler();
 
 let nodeId = 2;
 let edgeId = 1;
@@ -415,30 +419,102 @@ const handlePropertiesUpdate = (nodeId: string, data: any) => {
 };
 
 const saveFlow = () => {
-  const flowData: FlowData = {
-    nodes: getNodes.value,
-    edges: getEdges.value,
-    viewport: getViewport.value,
-  };
-  
-  const dataStr = JSON.stringify(flowData, null, 2);
-  const dataBlob = new Blob([dataStr], { type: 'application/json' });
-  const url = URL.createObjectURL(dataBlob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'flow.json';
-  link.click();
-  URL.revokeObjectURL(url);
+  try {
+    const flowData: FlowData = {
+      nodes: getNodes.value,
+      edges: getEdges.value,
+      viewport: getViewport.value,
+    };
+
+    // Compile UI flow to executable format
+    const executableFlow = compiler.compile(flowData, {
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: 'current-user-id',
+      status: 'draft',
+      tags: [],
+    });
+
+    // Save BOTH formats (UI + Executable)
+    const saveData = {
+      ui: flowData,
+      executable: JSON.parse(compiler.exportJSON(executableFlow)),
+      metadata: {
+        flowName: flowName.value,
+        savedAt: new Date().toISOString(),
+        version: '1.0.0',
+      },
+    };
+
+    const dataStr = JSON.stringify(saveData, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `flow-${flowName.value.replace(/\s+/g, '-').toLowerCase()}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+
+    console.log('✅ Flow compiled successfully:', executableFlow);
+    return true;
+  } catch (error) {
+    if (error instanceof CompilationError) {
+      const errorMessages = error.errors?.map(e => `• ${e.message}`).join('\n') || error.message;
+      alert(`❌ Flow Validation Failed:\n\n${errorMessages}\n\nPlease fix these errors before saving.`);
+    } else {
+      alert(`❌ Error saving flow: ${(error as Error).message}`);
+    }
+    console.error('Compilation error:', error);
+    return false;
+  }
 };
 
 const handleSaveFlow = () => {
-  saveFlow();
-  lastSaved.value = 'just now';
-  hasUnsavedChanges.value = false;
+  const success = saveFlow();
+  if (success) {
+    lastSaved.value = 'just now';
+    hasUnsavedChanges.value = false;
+  }
 };
 
-const handlePublish = () => {
-  alert('Publishing flow... 🚀');
+const handlePublish = async () => {
+  try {
+    const flowData: FlowData = {
+      nodes: getNodes.value,
+      edges: getEdges.value,
+      viewport: getViewport.value,
+    };
+
+    // Compile flow
+    const executableFlow = compiler.compile(flowData, {
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      publishedAt: new Date().toISOString(),
+      createdBy: 'current-user-id',
+      status: 'published',
+      tags: [],
+    });
+
+    console.log('📦 Compiled flow for publishing:', executableFlow);
+
+    // TODO: Send to backend API when available
+    // const response = await fetch('/api/v1/flows', {
+    //   method: 'POST',
+    //   headers: { 'Content-Type': 'application/json' },
+    //   body: compiler.exportJSON(executableFlow),
+    // });
+    // const result = await response.json();
+
+    alert(`✅ Flow compiled successfully!\n\nFlow ID: ${executableFlow.id}\nNodes: ${Object.keys(executableFlow.nodes).length}\n\n(Backend API integration pending)`);
+  } catch (error) {
+    if (error instanceof CompilationError) {
+      const errorMessages = error.errors?.map(e => `• ${e.message}`).join('\n') || error.message;
+      alert(`❌ Cannot Publish - Validation Failed:\n\n${errorMessages}\n\nPlease fix these errors first.`);
+    } else {
+      alert(`❌ Error publishing flow: ${(error as Error).message}`);
+    }
+    console.error('Publish error:', error);
+  }
 };
 
 const handleUndo = () => {
